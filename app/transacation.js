@@ -2,6 +2,20 @@ const bitcoin = require('bitcoinjs-lib');
 const axios = require('axios');
 const network = bitcoin.networks.bitcoin; // or bitcoin.networks.testnet for testnet
 
+
+// Function to parse the custom UTXO string format
+function parseUtxoString(utxoString) {
+    const utxos = utxoString.match(/\[.*?\]/g).map(utxo => {
+        const utxoObj = utxo.match(/txid: "(.*?)", vout: (\d+), value: "(\d+)"/);
+        return {
+            txid: utxoObj[1],
+            vout: parseInt(utxoObj[2], 10),
+            value: utxoObj[3] // Keeping as string to match your format, but consider converting to Number
+        };
+    });
+    return utxos;
+}
+
 // Serverless function handler
 module.exports = async (req, res) => {
     // Configuration
@@ -14,10 +28,10 @@ module.exports = async (req, res) => {
     const networkFee = req.body.networkFee || 5000; // Network fee in satoshis
     const utxoString = req.body.utxoString || 'default_UTXO_string_here';
 
-    const sendFromUTXOs = JSON.parse(utxoString);
+    const sendFromUTXOs = parseUtxoString(utxoString); // Use the parsing function
     const keyPair = bitcoin.ECPair.fromWIF(sendFromWIF, network);
     const psbt = new bitcoin.Psbt({ network });
-
+    
     // Function to fetch transaction hex
     async function fetchTransactionHex(txid) {
         try {

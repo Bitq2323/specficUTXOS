@@ -1,23 +1,17 @@
+const axios = require('axios');
+
 // Custom function to parse the UTXO string format
 function parseUtxoString(utxoString) {
-    // Initial transformation to make the string look like a JSON array
-    let formattedString = utxoString
-        .replace(/\[/g, '') // Remove all opening brackets
-        .replace(/\]/g, '') // Remove all closing brackets
-        .trim();
+    const utxoParts = utxoString.split('], [').map(part => 
+        `[${part.replace(/^\[/, '').replace(/\]$/, '')}]`
+    );
 
-// Split the string by "], [" to separate each UTXO, as originally intended
-const utxoParts = formattedString.split('], [');
     const utxos = utxoParts.map(part => {
-        // Split each part by ", " to get key-value pairs
-        const keyValuePairs = part.split(', ').map(kv => {
-            // Split by ": " to separate keys and values
-            let [key, value] = kv.split(': ');
-            value = value.replace(/"/g, ''); // Remove quotes from value
-            return { key, value };
+        const keyValuePairs = part.substring(1, part.length - 1).split(', ').map(kv => {
+            const [key, value] = kv.split(': ');
+            return { key: key.trim(), value: value.replace(/"/g, '').trim() };
         });
 
-        // Convert array of key-value pairs to an object
         const utxoObj = keyValuePairs.reduce((obj, { key, value }) => {
             obj[key] = value;
             return obj;
@@ -26,13 +20,26 @@ const utxoParts = formattedString.split('], [');
         return {
             txid: utxoObj.txid,
             vout: parseInt(utxoObj.vout, 10),
-            value: utxoObj.value // Keeping as string, but convert as needed
+            value: utxoObj.value
         };
     });
 
     return utxos;
 }
 
+// Function to fetch transaction hex
+async function fetchTransactionHex(txid) {
+    try {
+        const url = `https://blockstream.info/api/tx/${txid}/hex`;
+        const response = await axios.get(url);
+        return response.data;
+    } catch (error) {
+        console.error('Error fetching transaction hex:', error);
+        throw error; // Re-throw the error for handling by the caller
+    }
+}
+
 module.exports = {
     parseUtxoString,
+    fetchTransactionHex,
 };

@@ -1,6 +1,5 @@
 const bitcoin = require('bitcoinjs-lib');
 const axios = require('axios');
-const network = bitcoin.networks.bitcoin; // or bitcoin.networks.testnet for testnet
 
 // Custom function to parse the UTXO string format
 function parseUtxoString(utxoString) {
@@ -17,20 +16,23 @@ function parseUtxoString(utxoString) {
         utxos.push({
             txid: utxo.txid,
             vout: parseInt(utxo.vout, 10),
-            value: utxo.value
+            value: utxo.value // Keeping as string, but consider converting to Number if necessary for calculations
         });
     });
-    console.log('Parsed UTXOs:', utxos);
     return utxos;
 }
 
+// Serverless function handler
 module.exports = async (req, res) => {
     try {
-        console.log('Received request:', req.body);
+        // Log incoming request for debugging
+        console.log('Request body:', req.body);
+
+        const network = bitcoin.networks.bitcoin; // or bitcoin.networks.testnet for testnet
         const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString } = req.body;
 
+        // Validate required fields
         if (!sendFromWIF || !sendFromAddress || !sendToAddress || !sendToAmount || !utxoString) {
-            console.log('Missing required fields');
             return res.status(400).json({ error: 'Missing required fields' });
         }
 
@@ -38,15 +40,11 @@ module.exports = async (req, res) => {
         const keyPair = bitcoin.ECPair.fromWIF(sendFromWIF, network);
         const psbt = new bitcoin.Psbt({ network });
 
+        // Function to fetch transaction hex
         async function fetchTransactionHex(txid) {
-            try {
-                const url = `https://blockstream.info/api/tx/${txid}/hex`;
-                const response = await axios.get(url);
-                return response.data;
-            } catch (error) {
-                console.error('Error fetching transaction hex:', error);
-                throw new Error('Failed to fetch transaction hex');
-            }
+            const url = `https://blockstream.info/api/tx/${txid}/hex`;
+            const response = await axios.get(url);
+            return response.data;
         }
 
         let totalInputValue = 0;
@@ -58,36 +56,38 @@ module.exports = async (req, res) => {
                 sequence: isRBFEnabled ? 0xfffffffe : undefined,
                 nonWitnessUtxo: Buffer.from(txHex, 'hex'),
             });
-            totalInputValue += Number(utxo.value);
+            totalInputValue += parseInt(utxo.value, 10);
         }
 
-        const sendToValue = Number(sendToAmount);
-        const feeValue = Number(networkFee);
+        const sendToValue = parseInt(sendToAmount, 10);
+        const feeValue = parseInt(networkFee || 5000, 10);
         let changeValue = totalInputValue - sendToValue - feeValue;
 
+        // Add recipient output
         psbt.addOutput({
             address: sendToAddress,
             value: sendToValue,
         });
 
-        // Directly use the sender's address as the change address
+        // Add change output if applicable
         if (changeValue > 0) {
             psbt.addOutput({
-                address: sendFromAddress, // Use sender's address for change
+                address: sendFromAddress, // Use sender address for change
                 value: changeValue,
             });
         } else {
-            throw new Error('Insufficient input value for transaction outputs and fees');
+            throw new Error('Insufficient input value for the transaction outputs and fees');
         }
 
+        // Sign all inputs
         sendFromUTXOs.forEach((_, index) => {
             psbt.signInput(index, keyPair);
         });
 
         psbt.finalizeAllInputs();
         const transaction = psbt.extractTransaction();
-        console.log(`Transaction HEX: ${transaction.toHex()}`);
 
+        console.log(`Transaction HEX: ${transaction.toHex()}`);
         res.status(200).json({ success: true, transactionHex: transaction.toHex() });
     } catch (error) {
         console.error('Error processing transaction:', error);

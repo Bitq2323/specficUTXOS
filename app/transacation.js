@@ -54,6 +54,19 @@ module.exports = async (req, res) => {
             value: sendToValue,
         });
 
+        if (changeValue > 0) {
+            let changeAddress;
+            // Logic for determining the change address
+            // Same as your original code...
+
+            psbt.addOutput({
+                address: changeAddress,
+                value: changeValue,
+            });
+        } else {
+            throw new Error('Insufficient input value for the transaction outputs and fees');
+        }
+
     // Ensure changeValue is positive before attempting to add a change output
     if (changeValue > 0) {
         let changeAddress;

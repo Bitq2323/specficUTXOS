@@ -1,5 +1,5 @@
 const bitcoin = require('bitcoinjs-lib');
-const { parseUtxoString, fetchTransactionHex } = require('./helper'); // Adjust the path as necessary
+const { fetchTransactionHex } = require('./helper'); // You still need this for fetching transaction hex
 
 // Serverless function handler
 module.exports = async (req, res) => {
@@ -9,11 +9,9 @@ module.exports = async (req, res) => {
         const network = bitcoin.networks.bitcoin; // or use bitcoin.networks.testnet for testnet
         const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString } = req.body;
 
-        if (!sendFromWIF || !sendFromAddress || !sendToAddress || !sendToAmount || !utxoString) {
-            return res.status(400).json({ error: 'Missing required fields' });
-        }
+        // Directly use utxoString as it's already an array of objects, no need to parse
+        const sendFromUTXOs = utxoString;
 
-        const sendFromUTXOs = parseUtxoString(utxoString);
         const keyPair = bitcoin.ECPair.fromWIF(sendFromWIF, network);
         const psbt = new bitcoin.Psbt({ network });
 

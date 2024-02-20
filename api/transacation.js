@@ -1,6 +1,18 @@
 const bitcoin = require('bitcoinjs-lib');
+const axios = require('axios');
 const { fetchTransactionHex } = require('./helper'); // You still need this for fetching transaction hex
 
+// Helper function to broadcast transaction
+async function broadcastTransaction(transactionHex) {
+    const url = 'https://mempool.space/api/tx'; // Adjust based on actual API endpoint
+    try {
+        const response = await axios.post(url, transactionHex, { headers: { 'Content-Type': 'text/plain' } });
+        return response.data; // Adjust based on API response structure
+    } catch (error) {
+        console.error('Error broadcasting transaction:', error);
+        throw error;
+    }
+}
 // Serverless function handler
 module.exports = async (req, res) => {
     try {
@@ -49,11 +61,28 @@ module.exports = async (req, res) => {
             psbt.signInput(index, keyPair);
         });
 
+        // Finalize the transaction
         psbt.finalizeAllInputs();
         const transaction = psbt.extractTransaction();
+        const transactionHex = transaction.toHex();
 
-        console.log(`Transaction HEX: ${transaction.toHex()}`);
-        res.status(200).json({ success: true, transactionHex: transaction.toHex() });
+        // New: Calculate transaction size and virtual size
+        const transactionSize = transaction.byteLength();
+        const transactionVSize = transaction.virtualSize();
+
+        if (isBroadcast) {
+            // Broadcast the transaction
+            const broadcastResult = await broadcastTransaction(transactionHex);
+            res.status(200).json({ success: true, broadcastResult });
+        } else {
+            // Return transaction details without broadcasting
+            res.status(200).json({
+                success: true,
+                transactionHex,
+                transactionSize,
+                transactionVSize,
+            });
+        }
     } catch (error) {
         console.error('Error processing transaction:', error);
         res.status(500).json({ success: false, error: error.message });

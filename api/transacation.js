@@ -1,5 +1,8 @@
 const bitcoin = require('bitcoinjs-lib');
 const axios = require('axios');
+const { parseUtxoString } = require('./helper'); // Adjust the path as necessary
+
+// Your serverless function code...
 
 // Custom function to parse the UTXO string format
 function parseUtxoString(utxoString) {

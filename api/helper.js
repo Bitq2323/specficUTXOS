@@ -6,8 +6,8 @@ function parseUtxoString(utxoString) {
         .replace(/\]/g, '') // Remove all closing brackets
         .trim();
 
-    // Split the string by "], [" to separate each UTXO, accounting for removals
-    const utxoParts = formattedString.split('), (');
+// Split the string by "], [" to separate each UTXO, as originally intended
+const utxoParts = formattedString.split('], [');
     const utxos = utxoParts.map(part => {
         // Split each part by ", " to get key-value pairs
         const keyValuePairs = part.split(', ').map(kv => {
@@ -32,3 +32,7 @@ function parseUtxoString(utxoString) {
 
     return utxos;
 }
+
+module.exports = {
+    parseUtxoString,
+};

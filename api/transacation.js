@@ -2,52 +2,54 @@ const bitcoin = require('bitcoinjs-lib');
 const axios = require('axios');
 const network = bitcoin.networks.bitcoin; // or bitcoin.networks.testnet for testnet
 
-
-// Function to parse the custom UTXO string format
+// Custom function to parse the UTXO string format
 function parseUtxoString(utxoString) {
-    const utxos = utxoString.match(/\[.*?\]/g).map(utxo => {
-        const utxoObj = utxo.match(/txid: "(.*?)", vout: (\d+), value: "(\d+)"/);
-        return {
-            txid: utxoObj[1],
-            vout: parseInt(utxoObj[2], 10),
-            value: utxoObj[3] // Keeping as string to match your format, but consider converting to Number
-        };
+    const utxos = [];
+    const utxoParts = utxoString.split('], [');
+    utxoParts.forEach(part => {
+        const cleanedPart = part.replace('[', '').replace(']', '').trim();
+        const elements = cleanedPart.split(', ');
+        const utxo = {};
+        elements.forEach(element => {
+            const [key, value] = element.split(': ');
+            utxo[key.trim()] = value.replace(/"/g, '').trim();
+        });
+        utxos.push({
+            txid: utxo.txid,
+            vout: parseInt(utxo.vout, 10),
+            value: utxo.value
+        });
     });
+    console.log('Parsed UTXOs:', utxos);
     return utxos;
 }
 
-// Serverless function handler
 module.exports = async (req, res) => {
-    // Configuration
-    const network = bitcoin.networks.bitcoin; // or bitcoin.networks.testnet for testnet
-    const sendFromWIF = req.body.sendFromWIF || 'default_WIF_here';
-    const sendFromAddress = req.body.sendFromAddress || 'default_send_from_address_here';
-    const sendToAddress = req.body.sendToAddress || 'default_send_to_address_here';
-    const sendToAmount = req.body.sendToAmount || 10000; // Amount in satoshis to send
-    const isRBFEnabled = req.body.isRBFEnabled || true;
-    const networkFee = req.body.networkFee || 5000; // Network fee in satoshis
-    const utxoString = req.body.utxoString || 'default_UTXO_string_here';
+    try {
+        console.log('Received request:', req.body);
+        const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString } = req.body;
 
-    const sendFromUTXOs = parseUtxoString(utxoString); // Use the parsing function
-    const keyPair = bitcoin.ECPair.fromWIF(sendFromWIF, network);
-    const psbt = new bitcoin.Psbt({ network });
-    
-    // Function to fetch transaction hex
-    async function fetchTransactionHex(txid) {
-        try {
-            const url = `https://blockstream.info/api/tx/${txid}/hex`;
-            const response = await axios.get(url);
-            return response.data; // This is the transaction hex
-        } catch (error) {
-            console.error('Error fetching transaction:', error);
-            throw error;
+        if (!sendFromWIF || !sendFromAddress || !sendToAddress || !sendToAmount || !utxoString) {
+            console.log('Missing required fields');
+            return res.status(400).json({ error: 'Missing required fields' });
         }
-    }
 
-    // Main function to build and send the transaction
-    async function buildTransaction() {
+        const sendFromUTXOs = parseUtxoString(utxoString);
+        const keyPair = bitcoin.ECPair.fromWIF(sendFromWIF, network);
+        const psbt = new bitcoin.Psbt({ network });
+
+        async function fetchTransactionHex(txid) {
+            try {
+                const url = `https://blockstream.info/api/tx/${txid}/hex`;
+                const response = await axios.get(url);
+                return response.data;
+            } catch (error) {
+                console.error('Error fetching transaction hex:', error);
+                throw new Error('Failed to fetch transaction hex');
+            }
+        }
+
         let totalInputValue = 0;
-
         for (const utxo of sendFromUTXOs) {
             const txHex = await fetchTransactionHex(utxo.txid);
             psbt.addInput({
@@ -68,59 +70,27 @@ module.exports = async (req, res) => {
             value: sendToValue,
         });
 
+        // Directly use the sender's address as the change address
         if (changeValue > 0) {
-            let changeAddress;
-            // Logic for determining the change address
-            // Same as your original code...
-
             psbt.addOutput({
-                address: changeAddress,
+                address: sendFromAddress, // Use sender's address for change
                 value: changeValue,
             });
         } else {
-            throw new Error('Insufficient input value for the transaction outputs and fees');
+            throw new Error('Insufficient input value for transaction outputs and fees');
         }
 
-    // Ensure changeValue is positive before attempting to add a change output
-    if (changeValue > 0) {
-        let changeAddress;
-        if (sendFromAddress.startsWith('1')) {
-            changeAddress = bitcoin.payments.p2pkh({ pubkey: keyPair.publicKey, network }).address;
-        } else if (sendFromAddress.startsWith('3')) {
-            changeAddress = bitcoin.payments.p2sh({
-                redeem: bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network }),
-                network,
-            }).address;
-        } else if (sendFromAddress.startsWith('bc1')) {
-            changeAddress = bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network }).address;
-        } else {
-            throw new Error('Unsupported address type for sendFromAddress');
-        }
-
-        psbt.addOutput({
-            address: changeAddress,
-            value: changeValue,
+        sendFromUTXOs.forEach((_, index) => {
+            psbt.signInput(index, keyPair);
         });
-    } else {
-        throw new Error('Insufficient input value for the transaction outputs and fees');
+
+        psbt.finalizeAllInputs();
+        const transaction = psbt.extractTransaction();
+        console.log(`Transaction HEX: ${transaction.toHex()}`);
+
+        res.status(200).json({ success: true, transactionHex: transaction.toHex() });
+    } catch (error) {
+        console.error('Error processing transaction:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
-
-    // Sign all inputs
-    sendFromUTXOs.forEach((_, index) => {
-        psbt.signInput(index, keyPair);
-    });
-
-    psbt.finalizeAllInputs();
-    const transaction = psbt.extractTransaction();
-    console.log(`Transaction HEX: ${transaction.toHex()}`);
-    return transaction.toHex(); // Return the transaction hex
-}
-
-// Run the buildTransaction function and send the response
-try {
-    const transactionHex = await buildTransaction();
-    res.status(200).send({ success: true, transactionHex: transactionHex });
-} catch (error) {
-    res.status(500).send({ success: false, error: error.message });
-}
 };

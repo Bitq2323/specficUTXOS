@@ -13,13 +13,14 @@ async function broadcastTransaction(transactionHex) {
         throw error;
     }
 }
+
 // Serverless function handler
 module.exports = async (req, res) => {
     try {
         console.log('Request body:', req.body);
 
-        const network = bitcoin.networks.bitcoin; // or use bitcoin.networks.testnet for testnet
-        const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString } = req.body;
+        const network = bitcoin.networks.bitcoin;
+        const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast } = req.body; // Correctly extract isBroadcast here
 
         // Directly use utxoString as it's already an array of objects, no need to parse
         const sendFromUTXOs = utxoString;
@@ -70,12 +71,10 @@ module.exports = async (req, res) => {
         const transactionSize = transaction.byteLength();
         const transactionVSize = transaction.virtualSize();
 
-        if (isBroadcast) {
-            // Broadcast the transaction
+        if (isBroadcast) { // Use isBroadcast in your conditional check
             const broadcastResult = await broadcastTransaction(transactionHex);
             res.status(200).json({ success: true, broadcastResult });
         } else {
-            // Return transaction details without broadcasting
             res.status(200).json({
                 success: true,
                 transactionHex,

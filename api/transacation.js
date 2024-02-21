@@ -25,7 +25,13 @@ function isValidAddress(address, network) {
 module.exports = async (req, res) => {
     try {
         console.log('Request body:', req.body);
-
+        let utxos;
+        try {
+            utxos = JSON.parse(utxoString);
+        } catch (error) {
+            console.error('Error parsing utxoString:', error);
+            return res.status(400).json({ success: false, error: 'Invalid UTXO string format' });
+        }
         const expectedParams = ['sendFromWIF', 'sendFromAddress', 'sendToAddress', 'sendToAmount', 'isRBFEnabled', 'networkFee', 'utxoString', 'isBroadcast'];
         const missingParams = expectedParams.filter(param => req.body[param] === undefined);
 

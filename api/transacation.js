@@ -2,19 +2,17 @@ const bitcoin = require('bitcoinjs-lib');
 const axios = require('axios');
 const { fetchTransactionHex } = require('./helper');
 
-// Helper function to broadcast transaction
 async function broadcastTransaction(transactionHex) {
     const url = 'https://mempool.space/api/tx';
     try {
         const response = await axios.post(url, transactionHex, { headers: { 'Content-Type': 'text/plain' } });
-        return response.data; // Assume this returns a meaningful success response
+        return response.data;
     } catch (error) {
         console.error('Error broadcasting transaction:', error);
         throw new Error('Failed to broadcast transaction');
     }
 }
 
-// Function to validate Bitcoin addresses
 function isValidAddress(address, network) {
     try {
         bitcoin.address.toOutputScript(address, network);
@@ -24,31 +22,30 @@ function isValidAddress(address, network) {
     }
 }
 
-// Serverless function handler
 module.exports = async (req, res) => {
     try {
         console.log('Request body:', req.body);
 
-        // Expected parameters
         const expectedParams = ['sendFromWIF', 'sendFromAddress', 'sendToAddress', 'sendToAmount', 'isRBFEnabled', 'networkFee', 'utxoString', 'isBroadcast'];
-        let missingParams = [];
+        const missingParams = expectedParams.filter(param => req.body[param] === undefined);
 
-        // Check for missing parameters
-        expectedParams.forEach(param => {
-            if (req.body[param] === undefined || req.body[param] === null) {
-                missingParams.push(param);
-            }
-        });
-
-        // Validate presence of all required parameters
         if (missingParams.length > 0) {
             return res.status(400).json({ success: false, error: `Missing parameters: ${missingParams.join(', ')}` });
         }
 
         const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast } = req.body;
         const network = bitcoin.networks.bitcoin;
+
         if (!isValidAddress(sendFromAddress, network) || !isValidAddress(sendToAddress, network)) {
             return res.status(400).json({ success: false, error: 'Invalid Bitcoin address' });
+        }
+
+        if (typeof sendToAmount !== 'number' || sendToAmount <= 0) {
+            return res.status(400).json({ success: false, error: 'Invalid sendToAmount: Must be a positive number' });
+        }
+
+        if (typeof networkFee !== 'number' || networkFee < 0) {
+            return res.status(400).json({ success: false, error: 'Invalid networkFee: Must be a non-negative number' });
         }
 
         const keyPair = bitcoin.ECPair.fromWIF(sendFromWIF, network);
@@ -67,18 +64,16 @@ module.exports = async (req, res) => {
         }
 
         let sendToValue = sendToAmount;
-        const feeValue = parseInt(networkFee || 5000, 10);
+        const feeValue = networkFee;
         if (totalInputValue < sendToValue + feeValue) {
-            // Adjust sendToValue to exclude fee if total is insufficient
             sendToValue = Math.max(totalInputValue - feeValue, 0);
-            if (sendToValue < 546) { // Dust threshold
+            if (sendToValue < 546) {
                 throw new Error('Insufficient funds for fee or resulting output is dust');
             }
         }
 
         let changeValue = totalInputValue - sendToValue - feeValue;
         if (changeValue > 0 && changeValue < 546) {
-            // Add change to sendToValue if it would be dust
             sendToValue += changeValue;
             changeValue = 0;
         }

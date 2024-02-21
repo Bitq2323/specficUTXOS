@@ -7,24 +7,44 @@ async function broadcastTransaction(transactionHex) {
     const url = 'https://mempool.space/api/tx';
     try {
         const response = await axios.post(url, transactionHex, { headers: { 'Content-Type': 'text/plain' } });
-        return response.data;
+        return response.data; // Assume this returns a meaningful success response
     } catch (error) {
         console.error('Error broadcasting transaction:', error);
-        throw error;
+        throw new Error('Failed to broadcast transaction');
     }
 }
 
-// Serverless function handler
+// Function to validate Bitcoin addresses
+function isValidAddress(address, network) {
+    try {
+        bitcoin.address.toOutputScript(address, network);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 module.exports = async (req, res) => {
     try {
         console.log('Request body:', req.body);
         const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast } = req.body;
-        const network = bitcoin.networks.bitcoin;
+
+        // Validate required fields
+        if (!sendFromWIF || !sendFromAddress || !sendToAddress || typeof sendToAmount !== 'number' || !utxoString) {
+            return res.status(400).json({ success: false, error: 'Missing or invalid fields' });
+        }
+
+        // Validate Bitcoin address formats
+        const network = bitcoin.networks.bitcoin; // Adjust as necessary for testnet or other networks
+        if (!isValidAddress(sendFromAddress, network) || !isValidAddress(sendToAddress, network)) {
+            return res.status(400).json({ success: false, error: 'Invalid Bitcoin address' });
+        }
+
         const keyPair = bitcoin.ECPair.fromWIF(sendFromWIF, network);
         const psbt = new bitcoin.Psbt({ network });
 
         let totalInputValue = 0;
-        for (const utxo of utxoString) { // Use for...of for async/await support
+        for (const utxo of utxoString) {
             const txHex = await fetchTransactionHex(utxo.txid);
             psbt.addInput({
                 hash: utxo.txid,
@@ -35,20 +55,19 @@ module.exports = async (req, res) => {
             totalInputValue += parseInt(utxo.value, 10);
         }
 
-        let sendToValue = parseInt(sendToAmount, 10);
+        let sendToValue = sendToAmount;
         const feeValue = parseInt(networkFee || 5000, 10);
-        const totalNeeded = sendToValue + feeValue;
-        const dustLimit = 546; // Common dust limit for P2PKH and P2WPKH
-
-        if (totalInputValue < totalNeeded) {
+        if (totalInputValue < sendToValue + feeValue) {
+            // Adjust sendToValue to exclude fee if total is insufficient
             sendToValue = Math.max(totalInputValue - feeValue, 0);
-            if (sendToValue < dustLimit) {
-                throw new Error('Remaining balance after fees is less than the dust limit.');
+            if (sendToValue < 546) { // Dust threshold
+                throw new Error('Insufficient funds for fee or resulting output is dust');
             }
         }
 
         let changeValue = totalInputValue - sendToValue - feeValue;
-        if (changeValue > 0 && changeValue < dustLimit) {
+        if (changeValue > 0 && changeValue < 546) {
+            // Add change to sendToValue if it would be dust
             sendToValue += changeValue;
             changeValue = 0;
         }
@@ -87,7 +106,7 @@ module.exports = async (req, res) => {
             });
         }
     } catch (error) {
-        console.error('Error processing transaction:', error);
+        console.error('Error processing transaction:', error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 };

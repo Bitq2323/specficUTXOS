@@ -1,13 +1,13 @@
 const bitcoin = require('bitcoinjs-lib');
 const axios = require('axios');
-const { fetchTransactionHex } = require('./helper'); // You still need this for fetching transaction hex
+const { fetchTransactionHex } = require('./helper');
 
 // Helper function to broadcast transaction
 async function broadcastTransaction(transactionHex) {
-    const url = 'https://mempool.space/api/tx'; // Adjust based on actual API endpoint
+    const url = 'https://mempool.space/api/tx';
     try {
         const response = await axios.post(url, transactionHex, { headers: { 'Content-Type': 'text/plain' } });
-        return response.data; // Adjust based on API response structure
+        return response.data;
     } catch (error) {
         console.error('Error broadcasting transaction:', error);
         throw error;
@@ -18,18 +18,13 @@ async function broadcastTransaction(transactionHex) {
 module.exports = async (req, res) => {
     try {
         console.log('Request body:', req.body);
-
+        const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast } = req.body;
         const network = bitcoin.networks.bitcoin;
-        const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast } = req.body; // Correctly extract isBroadcast here
-
-        // Directly use utxoString as it's already an array of objects, no need to parse
-        const sendFromUTXOs = utxoString;
-
         const keyPair = bitcoin.ECPair.fromWIF(sendFromWIF, network);
         const psbt = new bitcoin.Psbt({ network });
 
         let totalInputValue = 0;
-        for (const utxo of sendFromUTXOs) {
+        for (const utxo of utxoString) { // Use for...of for async/await support
             const txHex = await fetchTransactionHex(utxo.txid);
             psbt.addInput({
                 hash: utxo.txid,
@@ -40,9 +35,23 @@ module.exports = async (req, res) => {
             totalInputValue += parseInt(utxo.value, 10);
         }
 
-        const sendToValue = parseInt(sendToAmount, 10);
+        let sendToValue = parseInt(sendToAmount, 10);
         const feeValue = parseInt(networkFee || 5000, 10);
+        const totalNeeded = sendToValue + feeValue;
+        const dustLimit = 546; // Common dust limit for P2PKH and P2WPKH
+
+        if (totalInputValue < totalNeeded) {
+            sendToValue = Math.max(totalInputValue - feeValue, 0);
+            if (sendToValue < dustLimit) {
+                throw new Error('Remaining balance after fees is less than the dust limit.');
+            }
+        }
+
         let changeValue = totalInputValue - sendToValue - feeValue;
+        if (changeValue > 0 && changeValue < dustLimit) {
+            sendToValue += changeValue;
+            changeValue = 0;
+        }
 
         psbt.addOutput({
             address: sendToAddress,
@@ -54,27 +63,22 @@ module.exports = async (req, res) => {
                 address: sendFromAddress,
                 value: changeValue,
             });
-        } else {
-            throw new Error('Insufficient input value for the transaction outputs and fees');
         }
 
-        sendFromUTXOs.forEach((_, index) => {
+        utxoString.forEach((_, index) => {
             psbt.signInput(index, keyPair);
         });
 
-        // Finalize the transaction
         psbt.finalizeAllInputs();
         const transaction = psbt.extractTransaction();
         const transactionHex = transaction.toHex();
 
-        // New: Calculate transaction size and virtual size
-        const transactionSize = transaction.byteLength();
-        const transactionVSize = transaction.virtualSize();
-
-        if (isBroadcast) { // Use isBroadcast in your conditional check
+        if (isBroadcast) {
             const broadcastResult = await broadcastTransaction(transactionHex);
             res.status(200).json({ success: true, broadcastResult });
         } else {
+            const transactionSize = transaction.byteLength();
+            const transactionVSize = transaction.virtualSize();
             res.status(200).json({
                 success: true,
                 transactionHex,

@@ -1,8 +1,17 @@
 const axios = require('axios');
 
-// Existing fetchTransactionHex function
 async function fetchTransactionHex(txid) {
-    // Implementation remains the same...
+    if (!txid) {
+        throw new Error('txid is undefined or invalid');
+    }
+    const url = `https://blockstream.info/api/tx/${txid}/hex`;
+    try {
+        const response = await axios.get(url);
+        return response.data;
+    } catch (error) {
+        console.error('Failed to fetch transaction hex for txid:', txid, '; Error:', error);
+        throw new Error(`Failed to fetch transaction hex for txid: ${txid}`);
+    }
 }
 
 // New parseCustomUtxoString function

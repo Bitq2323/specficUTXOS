@@ -8,7 +8,6 @@ async function broadcastTransaction(transactionHex) {
         const response = await axios.post(url, transactionHex, { headers: { 'Content-Type': 'text/plain' } });
         return response.data;
     } catch (error) {
-        console.error('Error broadcasting transaction:', error);
         throw new Error('Failed to broadcast transaction');
     }
 }
@@ -24,7 +23,6 @@ function isValidAddress(address, network) {
 
 module.exports = async (req, res) => {
     try {
-        console.log('Request body:', req.body);
   
         const expectedParams = ['sendFromWIF', 'sendFromAddress', 'sendToAddress', 'sendToAmount', 'isRBFEnabled', 'networkFee', 'utxoString', 'isBroadcast'];
         const missingParams = expectedParams.filter(param => req.body[param] === undefined);
@@ -54,10 +52,8 @@ module.exports = async (req, res) => {
         let totalInputValue = 0;
         for (const utxo of utxoString) {
             if (!utxo || !utxo.txid) {
-                console.error('UTXO is missing or does not have a txid:', utxo);
                 throw new Error('UTXO is missing or does not have a txid');
             }
-            console.log('Fetching hex for txid:', utxo.txid); // Ensure this logs before fetching
             const txHex = await fetchTransactionHex(utxo.txid);            psbt.addInput({
                 hash: utxo.txid,
                 index: utxo.vout,

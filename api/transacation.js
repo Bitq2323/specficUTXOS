@@ -61,13 +61,9 @@ module.exports = async (req, res) => {
         const psbt = new bitcoin.Psbt({ network });
 
         let totalInputValue = 0;
-        for (const utxo of utxoString) {
-            if (!utxo || !utxo.txid) {
-                console.error('UTXO is missing or does not have a txid:', utxo);
-                throw new Error('UTXO is missing or does not have a txid');
-            }
-            console.log('Fetching hex for txid:', utxo.txid); // Ensure this logs before fetching
-            const txHex = await fetchTransactionHex(utxo.txid);            psbt.addInput({
+        for (const utxo of parsedUtxoString) {
+            const txHex = await fetchTransactionHex(utxo.txid);
+            psbt.addInput({
                 hash: utxo.txid,
                 index: utxo.vout,
                 sequence: isRBFEnabled ? 0xfffffffe : undefined,

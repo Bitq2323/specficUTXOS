@@ -16,10 +16,6 @@ module.exports = async (req, res) => {
     const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast } = req.body;
     const network = bitcoin.networks.bitcoin;
 
-    if (!isValidAddress(sendFromAddress, network) || !isValidAddress(sendToAddress, network)) {
-        return res.status(400).json({ success: false, error: 'Invalid Bitcoin address' });
-    }
-
     let parsedUtxos;
     try {
         parsedUtxos = parseCustomUtxoString(utxoString);

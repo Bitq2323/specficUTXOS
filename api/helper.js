@@ -37,33 +37,9 @@ function parseCustomUtxoString(utxoString) {
     });
     return utxos;
 }
-// New: broadcastTransaction function
-async function broadcastTransaction(transactionHex) {
-    const url = 'https://mempool.space/api/tx';
-    try {
-        const response = await axios.post(url, transactionHex, { headers: { 'Content-Type': 'text/plain' } });
-        return response.data;
-    } catch (error) {
-        console.error('Error broadcasting transaction:', error);
-        throw new Error('Failed to broadcast transaction');
-    }
-}
-
-// New: isValidAddress function
-function isValidAddress(address, network) {
-    try {
-        bitcoin.address.toOutputScript(address, network);
-        return true;
-    } catch (error) {
-        console.error('Invalid address:', address, '; Error:', error);
-        return false;
-    }
-}
 
 // Exporting both functions
 module.exports = {
     fetchTransactionHex,
     parseCustomUtxoString,
-    broadcastTransaction,
-    isValidAddress,
 };

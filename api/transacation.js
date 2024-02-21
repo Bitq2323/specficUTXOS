@@ -1,27 +1,7 @@
 const bitcoin = require('bitcoinjs-lib');
 const axios = require('axios');
-const { fetchTransactionHex, parseCustomUtxoString } = require('./helper');
+const { fetchTransactionHex, parseCustomUtxoString, broadcastTransaction, isValidAddress } = require('./helper');
 
-async function broadcastTransaction(transactionHex) {
-    const url = 'https://mempool.space/api/tx';
-    try {
-        const response = await axios.post(url, transactionHex, { headers: { 'Content-Type': 'text/plain' } });
-        return response.data;
-    } catch (error) {
-        console.error('Error broadcasting transaction:', error);
-        throw new Error('Failed to broadcast transaction');
-    }
-}
-
-function isValidAddress(address, network) {
-    try {
-        bitcoin.address.toOutputScript(address, network);
-        return true;
-    } catch (error) {
-        console.error('Invalid address:', address, '; Error:', error);
-        return false;
-    }
-}
 
 module.exports = async (req, res) => {
     console.log('Request body:', req.body);

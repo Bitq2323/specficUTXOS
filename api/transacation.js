@@ -24,18 +24,29 @@ function isValidAddress(address, network) {
     }
 }
 
+// Serverless function handler
 module.exports = async (req, res) => {
     try {
         console.log('Request body:', req.body);
-        const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast } = req.body;
 
-        // Validate required fields
-        if (!sendFromWIF || !sendFromAddress || !sendToAddress || typeof sendToAmount !== 'number' || !utxoString) {
-            return res.status(400).json({ success: false, error: 'Missing or invalid fields' });
+        // Expected parameters
+        const expectedParams = ['sendFromWIF', 'sendFromAddress', 'sendToAddress', 'sendToAmount', 'isRBFEnabled', 'networkFee', 'utxoString', 'isBroadcast'];
+        let missingParams = [];
+
+        // Check for missing parameters
+        expectedParams.forEach(param => {
+            if (req.body[param] === undefined || req.body[param] === null) {
+                missingParams.push(param);
+            }
+        });
+
+        // Validate presence of all required parameters
+        if (missingParams.length > 0) {
+            return res.status(400).json({ success: false, error: `Missing parameters: ${missingParams.join(', ')}` });
         }
 
-        // Validate Bitcoin address formats
-        const network = bitcoin.networks.bitcoin; // Adjust as necessary for testnet or other networks
+        const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast } = req.body;
+        const network = bitcoin.networks.bitcoin;
         if (!isValidAddress(sendFromAddress, network) || !isValidAddress(sendToAddress, network)) {
             return res.status(400).json({ success: false, error: 'Invalid Bitcoin address' });
         }

@@ -1,6 +1,6 @@
 const bitcoin = require('bitcoinjs-lib');
 const axios = require('axios');
-const { fetchTransactionHex, parseCustomUtxoString, broadcastTransaction, isValidAddress } = require('./helper');
+const { fetchTransactionHex, parseCustomUtxoString, broadcastTransaction } = require('./helper');
 
 
 module.exports = async (req, res) => {

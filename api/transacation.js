@@ -24,14 +24,13 @@ function isValidAddress(address, network) {
 
 module.exports = async (req, res) => {
     try {
-        // Ensure the request body is logged first
         console.log('Request body:', req.body);
 
-        // Parsing the utxoString from string to JSON
-        let parsedUtxoString;
+        // Directly parsing 'utxoString' from the request body
+        let parsedUtxos;
         try {
-            parsedUtxoString = JSON.parse(req.body.utxoString);
-        } catch (error) {
+            parsedUtxos = JSON.parse(req.body.utxoString);
+        } catch (parseError) {
             return res.status(400).json({ success: false, error: "Failed to parse 'utxoString'. Ensure it's a valid JSON string." });
         }
 
@@ -61,6 +60,7 @@ module.exports = async (req, res) => {
         const psbt = new bitcoin.Psbt({ network });
 
         let totalInputValue = 0;
+        // Iterate over parsedUtxoString, not utxoString
         for (const utxo of parsedUtxoString) {
             const txHex = await fetchTransactionHex(utxo.txid);
             psbt.addInput({

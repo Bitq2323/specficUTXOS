@@ -16,8 +16,9 @@ module.exports = async (req, res) => {
         const psbt = new bitcoin.Psbt({ network });
         let totalInputValue = 0;
         const utxos = parseUtxos(utxoString);
-
-        for (const { txid, vout, value, wif } of utxos) {
+        
+        // Add inputs
+        for (const { txid, vout, value } of utxos) {
             const txHex = await fetchTransactionHex(txid);
             psbt.addInput({
                 hash: txid,
@@ -26,38 +27,33 @@ module.exports = async (req, res) => {
                 nonWitnessUtxo: Buffer.from(txHex, 'hex'),
             });
             totalInputValue += value;
-
-            const keyPair = bitcoin.ECPair.fromWIF(wif, network);
-            psbt.signInput(psbt.inputCount - 1, keyPair);
         }
-
+        
         let sendToValue = sendToAmount;
         const feeValue = networkFee;
-        if (totalInputValue < sendToValue + feeValue) {
-            sendToValue = Math.max(totalInputValue - feeValue, 0);
-            if (sendToValue < 546) {
-                throw new Error('Insufficient funds for fee or resulting output is dust');
-            }
-        }
-
         let changeValue = totalInputValue - sendToValue - feeValue;
-        if (changeValue > 0 && changeValue < 546) {
-            sendToValue += changeValue;
-            changeValue = 0;
-        }
-
+        
+        // Add output to recipient
         psbt.addOutput({
             address: sendToAddress,
             value: sendToValue,
         });
-
+        
+        // Add change output if needed
         if (changeValue > 0) {
             psbt.addOutput({
                 address: changeAddress,
                 value: changeValue,
             });
         }
-
+        
+        // Now, sign all inputs
+        for (let index = 0; index < utxos.length; index++) {
+            const { wif } = utxos[index];
+            const keyPair = bitcoin.ECPair.fromWIF(wif, network);
+            psbt.signInput(index, keyPair);
+        }
+        
         psbt.finalizeAllInputs();
         const transaction = psbt.extractTransaction();
         const transactionHex = transaction.toHex();

@@ -22,14 +22,22 @@ function isValidAddress(address, network) {
 }
 
 function parseUtxos(utxoString) {
-    // Correctly parse the UTXO string into an array of UTXO objects
-    return utxoString.split(',').map(utxo => {
-        const parts = utxo.split(':');
+    // Split the UTXO string by the pipe character to get each UTXO entry
+    return utxoString.split('|').map(utxo => {
+        // Each UTXO's details are separated by commas, so we further split those
+        const parts = utxo.split(',');
+        // Create a map to easily access the values by key
+        const utxoMap = parts.reduce((map, part) => {
+            const [key, value] = part.split(':');
+            map[key] = value;
+            return map;
+        }, {});
+        // Return the structured UTXO object
         return {
-            txid: parts[5],
-            vout: parseInt(parts[2], 10),
-            value: parseInt(parts[4], 10),
-            wif: parts[1],
+            txid: utxoMap.txhash,
+            vout: parseInt(utxoMap.vout, 10),
+            value: parseInt(utxoMap.value, 10),
+            wif: utxoMap.wif,
         };
     });
 }

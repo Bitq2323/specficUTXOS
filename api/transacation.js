@@ -2,7 +2,7 @@ const bitcoin = require('bitcoinjs-lib');
 const { broadcastTransaction, parseUtxos, fetchTransactionHex } = require('./helper');
 
 module.exports = async (req, res) => {
-    console.log('Request Body:', JSON.stringify(req.body));
+    console.log('Request Body:', req.body);
     try {
         const expectedParams = ['sendToAddress', 'sendToAmount', 'isRBFEnabled', 'networkFee', 'utxoString', 'isBroadcast', 'changeAddress', 'isSelectedUtxos'];
         const missingParams = expectedParams.filter(param => req.body[param] === undefined);
@@ -14,89 +14,61 @@ module.exports = async (req, res) => {
         const { sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast, changeAddress, isSelectedUtxos } = req.body;
         const network = bitcoin.networks.bitcoin;
 
-        let utxos = parseUtxos(utxoString);
-        if (!isSelectedUtxos) {
-            utxos.sort((a, b) => b.value - a.value); // Sort UTXOs by value in descending order if isSelectedUtxos is false
-        }
-
         const psbt = new bitcoin.Psbt({ network });
         let totalInputValue = 0;
+        const utxos = parseUtxos(utxoString).sort((a, b) => b.value - a.value); // Sort UTXOs by value in descending order if isSelectedUtxos is false
+        
+        let requiredValue = sendToAmount + networkFee;
+        let selectedUtxos = isSelectedUtxos ? utxos : [];
 
-// Before your loop for adding inputs
-let selectedUtxos = [];
-if (!isSelectedUtxos) {
-    let requiredValue = sendToAmount + networkFee;
-    for (const utxo of utxos) {
-        if (totalInputValue < requiredValue) {
-            selectedUtxos.push(utxo);
-            totalInputValue += utxo.value; // Accumulate total input value
+        if (!isSelectedUtxos) {
+            // Only select the necessary UTXOs to cover the amount and fee if isSelectedUtxos is false
+            for (const utxo of utxos) {
+                if (totalInputValue < requiredValue) {
+                    selectedUtxos.push(utxo);
+                    totalInputValue += utxo.value;
+                } else {
+                    break; // Stop selecting UTXOs once we have enough value
+                }
+            }
         } else {
-            break; // Stop selecting UTXOs once we have enough value
+            // Use all provided UTXOs if isSelectedUtxos is true
+            selectedUtxos.forEach(utxo => totalInputValue += utxo.value);
         }
-    }
-} else {
-    // Use all provided UTXOs if isSelectedUtxos is true
-    selectedUtxos = utxos;
-    selectedUtxos.forEach(utxo => totalInputValue += utxo.value); // Ensure totalInputValue is correctly accumulated
-}
 
-// Corrected loop for adding inputs
-for (const utxo of selectedUtxos) {
-    const txHex = await fetchTransactionHex(utxo.txid);
-    const ecpair = bitcoin.ECPair.fromWIF(utxo.wif, network);
-    let input = {
-        hash: utxo.txid,
-        index: utxo.vout,
-        sequence: isRBFEnabled ? 0xfffffffe : undefined,
-    };
-
-    if (utxo.address.startsWith('3')) {
-        const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: ecpair.publicKey, network });
-        const p2sh = bitcoin.payments.p2sh({ redeem: p2wpkh, network });
-        input.witnessUtxo = {
-            script: p2sh.output,
-            value: utxo.value,
-        };
-        input.redeemScript = p2sh.redeem.output;
-    } else {
-        input.nonWitnessUtxo = Buffer.from(txHex, 'hex');
-    }
-
-    psbt.addInput(input);
-}
-
-        let sendToValue = Math.min(sendToAmount, totalInputValue - networkFee);
+        // Add inputs for selected UTXOs
+        for (const { txid, vout, value } of selectedUtxos) {
+            const txHex = await fetchTransactionHex(txid);
+            psbt.addInput({
+                hash: txid,
+                index: vout,
+                sequence: isRBFEnabled ? 0xfffffffe : undefined,
+                nonWitnessUtxo: Buffer.from(txHex, 'hex'),
+            });
+        }
+        
+        let sendToValue = Math.min(sendToAmount, totalInputValue - networkFee); // Adjust if totalInputValue is not enough
         let changeValue = totalInputValue - sendToValue - networkFee;
 
-        if (sendToValue < 0) throw new Error('Insufficient funds to cover the sending amount and fee');
+        // Ensure sendToValue is not negative
+        if (sendToValue < 0) {
+            throw new Error('Insufficient funds to cover the sending amount and fee');
+        }
 
+        // Add output to recipient
         psbt.addOutput({ address: sendToAddress, value: sendToValue });
 
-        const dustLimit = 546; // Satoshi, typical dust limit
+        const dustLimit = 546; // Define a typical dust limit
         if (changeValue > dustLimit) {
+            // Add change output if above dust limit
             psbt.addOutput({ address: changeAddress, value: changeValue });
         }
 
-// Loop through selectedUtxos to sign each input
-selectedUtxos.forEach((utxo, index) => {
-    const keyPair = bitcoin.ECPair.fromWIF(utxo.wif, network);
-    if (utxo.address.startsWith('3')) {
-        // For P2SH-P2WPKH addresses
-        const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network });
-        const p2sh = bitcoin.payments.p2sh({ redeem: p2wpkh, network });
-
-        psbt.signInput(index, keyPair, {
-            redeemScript: p2sh.redeem.output,
-            witnessUtxo: {
-                script: p2sh.output,
-                value: utxo.value,
-            },
+        // Sign selected inputs
+        selectedUtxos.forEach((utxo, index) => {
+            const keyPair = bitcoin.ECPair.fromWIF(utxo.wif, network);
+            psbt.signInput(index, keyPair);
         });
-    } else {
-        // For non-P2SH-P2WPKH inputs, sign normally
-        psbt.signInput(index, keyPair);
-    }
-});
 
         psbt.finalizeAllInputs();
         const transaction = psbt.extractTransaction();
@@ -108,12 +80,7 @@ selectedUtxos.forEach((utxo, index) => {
         } else {
             const transactionSize = transaction.byteLength();
             const transactionVSize = transaction.virtualSize();
-            res.status(200).json({
-                success: true,
-                transactionHex,
-                transactionSize,
-                transactionVSize,
-            });
+            res.status(200).json({ success: true, transactionHex, transactionSize, transactionVSize });
         }
     } catch (error) {
         console.error('Error processing transaction:', error.message);

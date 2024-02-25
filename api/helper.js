@@ -22,15 +22,6 @@ async function fetchTransactionHex(txid) {
     }
 }
 
-function isValidAddress(address, network) {
-    try {
-        bitcoin.address.toOutputScript(address, network);
-        return true;
-    } catch (e) {
-        return false;
-    }
-}
-
 function parseUtxos(utxoString) {
     return utxoString.split('|').map(utxo => {
         const parts = utxo.split(',');

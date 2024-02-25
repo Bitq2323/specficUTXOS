@@ -1,5 +1,5 @@
 const bitcoin = require('bitcoinjs-lib');
-const { broadcastTransaction, isValidAddress, parseUtxos, fetchTransactionHex } = require('./helper');
+const { broadcastTransaction, parseUtxos, fetchTransactionHex } = require('./helper');
 
 module.exports = async (req, res) => {
     try {
@@ -12,10 +12,6 @@ module.exports = async (req, res) => {
 
         const { sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast, changeAddress } = req.body;
         const network = bitcoin.networks.bitcoin;
-
-        if (!isValidAddress(sendToAddress, network) || !isValidAddress(changeAddress, network)) {
-            return res.status(400).json({ success: false, error: 'Invalid Bitcoin address' });
-        }
 
         if (typeof sendToAmount !== 'number' || sendToAmount <= 0) {
             return res.status(400).json({ success: false, error: 'Invalid sendToAmount: Must be a positive number' });

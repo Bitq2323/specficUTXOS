@@ -2,6 +2,7 @@ const bitcoin = require('bitcoinjs-lib');
 const { broadcastTransaction, parseUtxos, fetchTransactionHex } = require('./helper');
 
 module.exports = async (req, res) => {
+    console.log('Request Body:', req.body);
     try {
         const expectedParams = ['sendToAddress', 'sendToAmount', 'isRBFEnabled', 'networkFee', 'utxoString', 'isBroadcast', 'changeAddress'];
         const missingParams = expectedParams.filter(param => req.body[param] === undefined);

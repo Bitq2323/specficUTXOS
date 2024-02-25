@@ -16,37 +16,62 @@ module.exports = async (req, res) => {
 
         const psbt = new bitcoin.Psbt({ network });
         let totalInputValue = 0;
-        const utxos = parseUtxos(utxoString).sort((a, b) => b.value - a.value); // Sort UTXOs by value in descending order if isSelectedUtxos is false
-        
-        let requiredValue = sendToAmount + networkFee;
-        let selectedUtxos = isSelectedUtxos ? utxos : [];
+        let utxos = parseUtxos(utxoString);
 
         if (!isSelectedUtxos) {
-            // Only select the necessary UTXOs to cover the amount and fee if isSelectedUtxos is false
+            // Sort UTXOs by value in descending order if isSelectedUtxos is false
+            utxos.sort((a, b) => b.value - a.value);
+            let tempSelectedUtxos = [];
+            let tempTotalInputValue = 0;
+            let requiredValue = sendToAmount + networkFee;
             for (const utxo of utxos) {
-                if (totalInputValue < requiredValue) {
-                    selectedUtxos.push(utxo);
-                    totalInputValue += utxo.value;
+                if (tempTotalInputValue < requiredValue) {
+                    tempSelectedUtxos.push(utxo);
+                    tempTotalInputValue += utxo.value;
                 } else {
                     break; // Stop selecting UTXOs once we have enough value
                 }
             }
+            utxos = tempSelectedUtxos; // Use only the selected UTXOs
+            totalInputValue = tempTotalInputValue;
         } else {
             // Use all provided UTXOs if isSelectedUtxos is true
-            selectedUtxos.forEach(utxo => totalInputValue += utxo.value);
+            utxos.forEach(utxo => totalInputValue += utxo.value);
         }
 
         // Add inputs for selected UTXOs
-        for (const { txid, vout, value } of selectedUtxos) {
-            const txHex = await fetchTransactionHex(txid);
-            psbt.addInput({
-                hash: txid,
-                index: vout,
-                sequence: isRBFEnabled ? 0xfffffffe : undefined,
-                nonWitnessUtxo: Buffer.from(txHex, 'hex'),
+        for (const utxo of utxos) {
+            const txHex = await fetchTransactionHex(utxo.txid);
+            const ecpair = bitcoin.ECPair.fromWIF(utxo.wif, network);
+            const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: ecpair.publicKey, network });
+            const p2sh = bitcoin.payments.p2sh({
+                redeem: p2wpkh,
+                network,
             });
+
+            if (utxo.address.startsWith('3')) {
+                // For P2SH-P2WPKH addresses
+                psbt.addInput({
+                    hash: utxo.txid,
+                    index: utxo.vout,
+                    sequence: isRBFEnabled ? 0xfffffffe : undefined,
+                    witnessUtxo: {
+                        script: p2sh.output,
+                        value: utxo.value,
+                    },
+                    redeemScript: p2sh.redeem.output,
+                });
+            } else {
+                // For other address types
+                psbt.addInput({
+                    hash: utxo.txid,
+                    index: utxo.vout,
+                    sequence: isRBFEnabled ? 0xfffffffe : undefined,
+                    nonWitnessUtxo: Buffer.from(txHex, 'hex'),
+                });
+            }
         }
-        
+
         let sendToValue = Math.min(sendToAmount, totalInputValue - networkFee); // Adjust if totalInputValue is not enough
         let changeValue = totalInputValue - sendToValue - networkFee;
 
@@ -57,7 +82,7 @@ module.exports = async (req, res) => {
 
         // Add output to recipient
         psbt.addOutput({ address: sendToAddress, value: sendToValue });
-
+        
         const dustLimit = 546; // Define a typical dust limit
         if (changeValue > dustLimit) {
             // Add change output if above dust limit

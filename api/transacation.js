@@ -1,6 +1,19 @@
 const bitcoin = require('bitcoinjs-lib');
 const { broadcastTransaction, parseUtxos, fetchTransactionHex } = require('./helper');
 
+
+function detectAddressType(address) {
+    if (address.startsWith('bc1')) {
+        return 'p2wpkh';
+    } else if (address.startsWith('3')) {
+        return 'p2sh-p2wpkh';
+    } else if (address.startsWith('1')) {
+        return 'p2pkh';
+    } else {
+        throw new Error('Unsupported address type');
+    }
+}
+
 module.exports = async (req, res) => {
     console.log('Request Body:', req.body);
     try {
@@ -37,14 +50,29 @@ module.exports = async (req, res) => {
         }
 
         // Add inputs for selected UTXOs
-        for (const { txid, vout, value } of selectedUtxos) {
-            const txHex = await fetchTransactionHex(txid);
-            psbt.addInput({
-                hash: txid,
-                index: vout,
-                sequence: isRBFEnabled ? 0xfffffffe : undefined,
+        for (const utxo of utxos) {
+            const txHex = await fetchTransactionHex(utxo.txid);
+            const input = {
+                hash: utxo.txid,
+                index: utxo.vout,
+                sequence: req.body.isRBFEnabled ? 0xfffffffe : undefined,
                 nonWitnessUtxo: Buffer.from(txHex, 'hex'),
-            });
+            };
+
+            // Handle different address types
+            const addressType = detectAddressType(utxo.address);
+            if (addressType === 'p2sh-p2wpkh') {
+                const { redeemOutput } = bitcoin.payments.p2sh({
+                    redeem: bitcoin.payments.p2wpkh({ pubkey: bitcoin.ECPair.fromWIF(utxo.wif, network).publicKey, network }),
+                    network,
+                });
+                input.redeemScript = redeemOutput;
+            } else if (addressType !== 'p2wpkh' && addressType !== 'p2pkh') {
+                throw new Error(`Unsupported address type: ${addressType}`);
+            }
+
+            psbt.addInput(input);
+            totalInputValue += utxo.value;
         }
         
         let sendToValue = Math.min(sendToAmount, totalInputValue - networkFee); // Adjust if totalInputValue is not enough

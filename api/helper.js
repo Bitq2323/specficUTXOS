@@ -12,34 +12,46 @@ async function fetchTransactionHex(txid) {
         console.error('Failed to fetch transaction hex for txid:', txid, '; Error:', error);
         throw new Error(`Failed to fetch transaction hex for txid: ${txid}`);
     }
+}async function broadcastTransaction(transactionHex) {
+    const url = 'https://mempool.space/api/tx';
+    try {
+        const response = await axios.post(url, transactionHex, { headers: { 'Content-Type': 'text/plain' } });
+        return response.data;
+    } catch (error) {
+        throw new Error('Failed to broadcast transaction');
+    }
 }
 
-// New parseCustomUtxoString function
-function parseCustomUtxoString(utxoString) {
-    const utxos = [];
-    const utxoParts = utxoString.split('], [').map(part => part.replace(/\[|\]/g, ''));
-    utxoParts.forEach(part => {
-        const keyValuePairs = part.split(', ').map(kv => {
-            let [key, value] = kv.split(': ');
-            key = key.trim();
-            value = value.replace(/"/g, '').trim();
-            return { key, value };
-        });
-        const utxo = keyValuePairs.reduce((obj, { key, value }) => {
-            obj[key] = value;
-            return obj;
+function isValidAddress(address, network) {
+    try {
+        bitcoin.address.toOutputScript(address, network);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function parseUtxos(utxoString) {
+    return utxoString.split('|').map(utxo => {
+        const parts = utxo.split(',');
+        const utxoMap = parts.reduce((map, part) => {
+            const [key, value] = part.split(':');
+            map[key] = value;
+            return map;
         }, {});
-        utxos.push({
-            txid: utxo.txid,
-            vout: parseInt(utxo.vout, 10),
-            value: utxo.value
-        });
+        return {
+            txid: utxoMap.txhash,
+            vout: parseInt(utxoMap.vout, 10),
+            value: parseInt(utxoMap.value, 10),
+            wif: utxoMap.wif,
+            address: utxoMap.address, // Capture the address from UTXO
+        };
     });
-    return utxos;
 }
 
-// Exporting both functions
 module.exports = {
     fetchTransactionHex,
-    parseCustomUtxoString,
+    broadcastTransaction,
+    isValidAddress,
+    parseUtxos,
 };

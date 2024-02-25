@@ -83,21 +83,31 @@ module.exports = async (req, res) => {
 
         selectedUtxos.forEach((utxo, index) => {
             const keyPair = bitcoin.ECPair.fromWIF(utxo.wif, network);
-            // Assuming that p2sh or p2wpkh are correctly determined elsewhere in your code
+            // Determine if the input is P2SH, P2WPKH, etc., and prepare the appropriate signing parameters
             if (utxo.address.startsWith('3')) {
-                // For P2SH-P2WPKH addresses, which is a nested SegWit
-                const redeemScript = bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network }).output;
+                // Example for P2SH-P2WPKH
+                const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network });
+                const p2sh = bitcoin.payments.p2sh({
+                    redeem: p2wpkh,
+                    network,
+                });
+        
                 psbt.signInput(index, keyPair, {
-                    redeemScript: redeemScript,
-                    witnessValue: utxo.value,
-                    sighashType: bitcoin.Transaction.SIGHASH_ALL
+                    redeemScript: p2sh.redeem.output,
+                    witnessUtxo: {
+                        script: p2wpkh.output,
+                        value: utxo.value,
+                    },
+                    sighashType: bitcoin.Transaction.SIGHASH_ALL, // Directly passing the sighashType
                 });
             } else {
-                // For other addresses, assuming non-SegWit, just sign normally
-                psbt.signInput(index, keyPair, bitcoin.Transaction.SIGHASH_ALL);
+                // For other types, such as P2WPKH or P2PKH, where only the sighashType is needed
+                psbt.signInput(index, keyPair, {
+                    sighashType: bitcoin.Transaction.SIGHASH_ALL, // Directly passing the sighashType
+                });
             }
         });
-                psbt.finalizeAllInputs();
+                        psbt.finalizeAllInputs();
         const transaction = psbt.extractTransaction();
         const transactionHex = transaction.toHex();
 

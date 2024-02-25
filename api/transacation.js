@@ -22,9 +22,27 @@ module.exports = async (req, res) => {
         const psbt = new bitcoin.Psbt({ network });
         let totalInputValue = 0;
 
-// Corrected: Ensure async operation inside forEach by using for...of instead
+// Before your loop for adding inputs
+let selectedUtxos = [];
+if (!isSelectedUtxos) {
+    let requiredValue = sendToAmount + networkFee;
+    for (const utxo of utxos) {
+        if (totalInputValue < requiredValue) {
+            selectedUtxos.push(utxo);
+            totalInputValue += utxo.value; // Accumulate total input value
+        } else {
+            break; // Stop selecting UTXOs once we have enough value
+        }
+    }
+} else {
+    // Use all provided UTXOs if isSelectedUtxos is true
+    selectedUtxos = utxos;
+    selectedUtxos.forEach(utxo => totalInputValue += utxo.value); // Ensure totalInputValue is correctly accumulated
+}
+
+// Corrected loop for adding inputs
 for (const utxo of selectedUtxos) {
-    const txHex = await fetchTransactionHex(utxo.txid); // Await needs async function
+    const txHex = await fetchTransactionHex(utxo.txid);
     const ecpair = bitcoin.ECPair.fromWIF(utxo.wif, network);
     let input = {
         hash: utxo.txid,
@@ -59,19 +77,26 @@ for (const utxo of selectedUtxos) {
             psbt.addOutput({ address: changeAddress, value: changeValue });
         }
 
-        utxos.forEach((utxo, index) => {
-            const keyPair = bitcoin.ECPair.fromWIF(utxo.wif, network);
-            if (utxo.address.startsWith('3')) {
-                const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network });
-                const p2sh = bitcoin.payments.p2sh({ redeem: p2wpkh, network });
-                psbt.signInput(index, keyPair, {
-                    redeemScript: p2sh.redeem.output,
-                    witnessUtxo: input.witnessUtxo,
-                });
-            } else {
-                psbt.signInput(index, keyPair);
-            }
+// Loop through selectedUtxos to sign each input
+selectedUtxos.forEach((utxo, index) => {
+    const keyPair = bitcoin.ECPair.fromWIF(utxo.wif, network);
+    if (utxo.address.startsWith('3')) {
+        // For P2SH-P2WPKH addresses
+        const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network });
+        const p2sh = bitcoin.payments.p2sh({ redeem: p2wpkh, network });
+
+        psbt.signInput(index, keyPair, {
+            redeemScript: p2sh.redeem.output,
+            witnessUtxo: {
+                script: p2sh.output,
+                value: utxo.value,
+            },
         });
+    } else {
+        // For non-P2SH-P2WPKH inputs, sign normally
+        psbt.signInput(index, keyPair);
+    }
+});
 
         psbt.finalizeAllInputs();
         const transaction = psbt.extractTransaction();

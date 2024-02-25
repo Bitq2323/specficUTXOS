@@ -55,21 +55,22 @@ module.exports = async (req, res) => {
             value: sendToValue,
         });
 
-        // Add change output if needed
-        if (changeValue > 0) {
+        // Add change output if needed and if it's above dust limit
+        const dustLimit = 546; // Define a typical dust limit
+        if (changeValue > dustLimit) {
             psbt.addOutput({
                 address: changeAddress,
                 value: changeValue,
             });
         }
-        
+
         // Now, sign all inputs
         for (let index = 0; index < utxos.length; index++) {
             const { wif } = utxos[index];
             const keyPair = bitcoin.ECPair.fromWIF(wif, network);
             psbt.signInput(index, keyPair);
         }
-        
+
         psbt.finalizeAllInputs();
         const transaction = psbt.extractTransaction();
         const transactionHex = transaction.toHex();

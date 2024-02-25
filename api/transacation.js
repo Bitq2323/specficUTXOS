@@ -4,22 +4,40 @@ const { broadcastTransaction, parseUtxos, fetchTransactionHex } = require('./hel
 module.exports = async (req, res) => {
     console.log('Request Body:', req.body);
     try {
-        const expectedParams = ['sendToAddress', 'sendToAmount', 'isRBFEnabled', 'networkFee', 'utxoString', 'isBroadcast', 'changeAddress'];
+        const expectedParams = ['sendToAddress', 'sendToAmount', 'isRBFEnabled', 'networkFee', 'utxoString', 'isBroadcast', 'changeAddress', 'isSelectedUtxos'];
         const missingParams = expectedParams.filter(param => req.body[param] === undefined);
 
         if (missingParams.length > 0) {
             return res.status(400).json({ success: false, error: `Missing parameters: ${missingParams.join(', ')}` });
         }
 
-        const { sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast, changeAddress } = req.body;
+        const { sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast, changeAddress, isSelectedUtxos } = req.body;
         const network = bitcoin.networks.bitcoin;
 
         const psbt = new bitcoin.Psbt({ network });
         let totalInputValue = 0;
-        const utxos = parseUtxos(utxoString);
+        const utxos = parseUtxos(utxoString).sort((a, b) => b.value - a.value); // Sort UTXOs by value in descending order if isSelectedUtxos is false
         
-        // Add inputs
-        for (const { txid, vout, value } of utxos) {
+        let requiredValue = sendToAmount + networkFee;
+        let selectedUtxos = isSelectedUtxos ? utxos : [];
+
+        if (!isSelectedUtxos) {
+            // Only select the necessary UTXOs to cover the amount and fee if isSelectedUtxos is false
+            for (const utxo of utxos) {
+                if (totalInputValue < requiredValue) {
+                    selectedUtxos.push(utxo);
+                    totalInputValue += utxo.value;
+                } else {
+                    break; // Stop selecting UTXOs once we have enough value
+                }
+            }
+        } else {
+            // Use all provided UTXOs if isSelectedUtxos is true
+            selectedUtxos.forEach(utxo => totalInputValue += utxo.value);
+        }
+
+        // Add inputs for selected UTXOs
+        for (const { txid, vout, value } of selectedUtxos) {
             const txHex = await fetchTransactionHex(txid);
             psbt.addInput({
                 hash: txid,
@@ -27,23 +45,10 @@ module.exports = async (req, res) => {
                 sequence: isRBFEnabled ? 0xfffffffe : undefined,
                 nonWitnessUtxo: Buffer.from(txHex, 'hex'),
             });
-            totalInputValue += value;
         }
         
-        let sendToValue;
-        const feeValue = networkFee;
-        let changeValue;
-
-        // Dynamically calculate sendToValue and changeValue based on total input and fee
-        if (totalInputValue <= sendToAmount + feeValue) {
-            // If sending the whole balance or if the balance is not enough to cover the fee, adjust sendToValue
-            sendToValue = totalInputValue - feeValue;
-            changeValue = 0; // No change since the entire balance is used
-        } else {
-            // Otherwise, proceed as planned
-            sendToValue = sendToAmount;
-            changeValue = totalInputValue - sendToValue - feeValue;
-        }
+        let sendToValue = Math.min(sendToAmount, totalInputValue - networkFee); // Adjust if totalInputValue is not enough
+        let changeValue = totalInputValue - sendToValue - networkFee;
 
         // Ensure sendToValue is not negative
         if (sendToValue < 0) {
@@ -51,26 +56,19 @@ module.exports = async (req, res) => {
         }
 
         // Add output to recipient
-        psbt.addOutput({
-            address: sendToAddress,
-            value: sendToValue,
-        });
+        psbt.addOutput({ address: sendToAddress, value: sendToValue });
 
-        // Add change output if needed and if it's above dust limit
         const dustLimit = 546; // Define a typical dust limit
         if (changeValue > dustLimit) {
-            psbt.addOutput({
-                address: changeAddress,
-                value: changeValue,
-            });
+            // Add change output if above dust limit
+            psbt.addOutput({ address: changeAddress, value: changeValue });
         }
 
-        // Now, sign all inputs
-        for (let index = 0; index < utxos.length; index++) {
-            const { wif } = utxos[index];
-            const keyPair = bitcoin.ECPair.fromWIF(wif, network);
+        // Sign selected inputs
+        selectedUtxos.forEach((utxo, index) => {
+            const keyPair = bitcoin.ECPair.fromWIF(utxo.wif, network);
             psbt.signInput(index, keyPair);
-        }
+        });
 
         psbt.finalizeAllInputs();
         const transaction = psbt.extractTransaction();
@@ -82,12 +80,7 @@ module.exports = async (req, res) => {
         } else {
             const transactionSize = transaction.byteLength();
             const transactionVSize = transaction.virtualSize();
-            res.status(200).json({
-                success: true,
-                transactionHex,
-                transactionSize,
-                transactionVSize,
-            });
+            res.status(200).json({ success: true, transactionHex, transactionSize, transactionVSize });
         }
     } catch (error) {
         console.error('Error processing transaction:', error.message);

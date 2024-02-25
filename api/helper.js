@@ -43,6 +43,5 @@ function parseUtxos(utxoString) {
 module.exports = {
     fetchTransactionHex,
     broadcastTransaction,
-    isValidAddress,
     parseUtxos,
 };

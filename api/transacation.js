@@ -81,19 +81,25 @@ module.exports = async (req, res) => {
             psbt.addOutput({ address: changeAddress, value: changeValue });
         }
 
-        // Now, sign all inputs
-        selectedUtxos.forEach((utxo, index) => {
-            const keyPair = bitcoin.ECPair.fromWIF(utxo.wif, network);
-            // Check if the UTXO is P2SH-P2WPKH to determine if we need to provide witnessUtxo in signInput
-            if (utxo.address.startsWith('3')) {
-                const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network });
-                const p2sh = bitcoin.payments.p2sh({ redeem: p2wpkh, network });
-                psbt.signInput(index, keyPair, p2sh.redeem.output);
-            } else {
-                psbt.signInput(index, keyPair);
-            }
-        });
+// Assuming SIGHASH_ALL is allowed and is what you intend to use
+const SIGHASH_ALL = bitcoin.Transaction.SIGHASH_ALL;
 
+// Inside the forEach loop where you sign inputs
+selectedUtxos.forEach((utxo, index) => {
+    const keyPair = bitcoin.ECPair.fromWIF(utxo.wif, network);
+    if (utxo.address.startsWith('3')) {
+        // For P2SH-P2WPKH addresses
+        const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network });
+        const p2sh = bitcoin.payments.p2sh({ redeem: p2wpkh, network });
+        psbt.signInput(index, keyPair, { 
+            redeemScript: p2sh.redeem.output, 
+            witnessValue: utxo.value,
+            sighashType: SIGHASH_ALL // Explicitly specifying SIGHASH_ALL
+        });
+    } else {
+        psbt.signInput(index, keyPair, { sighashType: SIGHASH_ALL }); // Also specify for non-P2SH-P2WPKH for consistency
+    }
+});
         psbt.finalizeAllInputs();
         const transaction = psbt.extractTransaction();
         const transactionHex = transaction.toHex();

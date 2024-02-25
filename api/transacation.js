@@ -17,82 +17,81 @@ module.exports = async (req, res) => {
         const psbt = new bitcoin.Psbt({ network });
         let totalInputValue = 0;
         let utxos = parseUtxos(utxoString);
+        let selectedUtxos = []; // Ensure selectedUtxos is defined in the correct scope
 
         if (!isSelectedUtxos) {
-            // Sort UTXOs by value in descending order if isSelectedUtxos is false
-            utxos.sort((a, b) => b.value - a.value);
-            let tempSelectedUtxos = [];
+            // Select only the necessary UTXOs to cover the amount and fee
             let tempTotalInputValue = 0;
             let requiredValue = sendToAmount + networkFee;
-            for (const utxo of utxos) {
+            for (const utxo of utxos.sort((a, b) => b.value - a.value)) { // Sort UTXOs by value in descending order
                 if (tempTotalInputValue < requiredValue) {
-                    tempSelectedUtxos.push(utxo);
+                    selectedUtxos.push(utxo);
                     tempTotalInputValue += utxo.value;
                 } else {
                     break; // Stop selecting UTXOs once we have enough value
                 }
             }
-            utxos = tempSelectedUtxos; // Use only the selected UTXOs
             totalInputValue = tempTotalInputValue;
         } else {
-            // Use all provided UTXOs if isSelectedUtxos is true
-            utxos.forEach(utxo => totalInputValue += utxo.value);
+            // Use all provided UTXOs
+            selectedUtxos = utxos;
+            selectedUtxos.forEach(utxo => totalInputValue += utxo.value);
         }
 
         // Add inputs for selected UTXOs
-        for (const utxo of utxos) {
+        for (const utxo of selectedUtxos) {
             const txHex = await fetchTransactionHex(utxo.txid);
             const ecpair = bitcoin.ECPair.fromWIF(utxo.wif, network);
-            const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: ecpair.publicKey, network });
-            const p2sh = bitcoin.payments.p2sh({
-                redeem: p2wpkh,
-                network,
-            });
+            let input = {
+                hash: utxo.txid,
+                index: utxo.vout,
+                sequence: isRBFEnabled ? 0xfffffffe : undefined,
+                nonWitnessUtxo: Buffer.from(txHex, 'hex'),
+            };
 
+            // Special handling for P2SH-P2WPKH (BIP49) addresses
             if (utxo.address.startsWith('3')) {
-                // For P2SH-P2WPKH addresses
-                psbt.addInput({
-                    hash: utxo.txid,
-                    index: utxo.vout,
-                    sequence: isRBFEnabled ? 0xfffffffe : undefined,
-                    witnessUtxo: {
-                        script: p2sh.output,
-                        value: utxo.value,
-                    },
-                    redeemScript: p2sh.redeem.output,
+                const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: ecpair.publicKey, network });
+                const p2sh = bitcoin.payments.p2sh({
+                    redeem: p2wpkh,
+                    network,
                 });
-            } else {
-                // For other address types
-                psbt.addInput({
-                    hash: utxo.txid,
-                    index: utxo.vout,
-                    sequence: isRBFEnabled ? 0xfffffffe : undefined,
-                    nonWitnessUtxo: Buffer.from(txHex, 'hex'),
-                });
+                input.witnessUtxo = {
+                    script: p2sh.output,
+                    value: utxo.value,
+                };
+                input.redeemScript = p2sh.redeem.output;
             }
+
+            psbt.addInput(input);
         }
 
         let sendToValue = Math.min(sendToAmount, totalInputValue - networkFee); // Adjust if totalInputValue is not enough
         let changeValue = totalInputValue - sendToValue - networkFee;
 
-        // Ensure sendToValue is not negative
         if (sendToValue < 0) {
             throw new Error('Insufficient funds to cover the sending amount and fee');
         }
 
-        // Add output to recipient
         psbt.addOutput({ address: sendToAddress, value: sendToValue });
-        
-        const dustLimit = 546; // Define a typical dust limit
+
+        const dustLimit = 546; // Satoshi, typical dust limit
         if (changeValue > dustLimit) {
-            // Add change output if above dust limit
+            // Add change output if it's above the dust limit
             psbt.addOutput({ address: changeAddress, value: changeValue });
         }
 
-        // Sign selected inputs
+        // Now, sign all inputs
         selectedUtxos.forEach((utxo, index) => {
             const keyPair = bitcoin.ECPair.fromWIF(utxo.wif, network);
-            psbt.signInput(index, keyPair);
+            // Check if the UTXO is P2SH-P2WPKH to determine if we need to provide witnessUtxo in signInput
+            if (utxo.address.startsWith('3')) {
+                const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network });
+                const p2sh = bitcoin.payments.p2sh({ redeem: p2wpkh, network });
+                psbt.signInput(index, keyPair, p2sh.redeem.output);
+            } else {
+                psbt.signInput(index, keyPair);
+            }
         });
 
         psbt.finalizeAllInputs();
@@ -105,7 +104,12 @@ module.exports = async (req, res) => {
         } else {
             const transactionSize = transaction.byteLength();
             const transactionVSize = transaction.virtualSize();
-            res.status(200).json({ success: true, transactionHex, transactionSize, transactionVSize });
+            res.status(200).json({
+                success: true,
+                transactionHex,
+                transactionSize,
+                transactionVSize,
+            });
         }
     } catch (error) {
         console.error('Error processing transaction:', error.message);

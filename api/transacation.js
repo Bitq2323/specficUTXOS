@@ -81,32 +81,23 @@ module.exports = async (req, res) => {
             psbt.addOutput({ address: changeAddress, value: changeValue });
         }
 
-// Inside the forEach loop where you sign inputs
-selectedUtxos.forEach((utxo, index) => {
-    const keyPair = bitcoin.ECPair.fromWIF(utxo.wif, network);
-    if (utxo.address.startsWith('3')) {
-        // For P2SH-P2WPKH addresses
-        const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network });
-        const p2sh = bitcoin.payments.p2sh({ redeem: p2wpkh, network });
-
-        // The signInput method signature might vary; ensure it matches the library version you're using
-        // Assuming the psbt.signInput expects the parameters in the following way for this context
-        psbt.signInput(index, keyPair, {
-            redeemScript: p2sh.redeem.output,
-            witnessUtxo: {
-                script: p2sh.output,
-                value: utxo.value,
-            },
-            sighashType: bitcoin.Transaction.SIGHASH_ALL, // Directly passing sighashType as an integer
+        selectedUtxos.forEach((utxo, index) => {
+            const keyPair = bitcoin.ECPair.fromWIF(utxo.wif, network);
+            // Assuming that p2sh or p2wpkh are correctly determined elsewhere in your code
+            if (utxo.address.startsWith('3')) {
+                // For P2SH-P2WPKH addresses, which is a nested SegWit
+                const redeemScript = bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network }).output;
+                psbt.signInput(index, keyPair, {
+                    redeemScript: redeemScript,
+                    witnessValue: utxo.value,
+                    sighashType: bitcoin.Transaction.SIGHASH_ALL
+                });
+            } else {
+                // For other addresses, assuming non-SegWit, just sign normally
+                psbt.signInput(index, keyPair, bitcoin.Transaction.SIGHASH_ALL);
+            }
         });
-    } else {
-        // For non-P2SH-P2WPKH addresses, just sign normally without additional options
-        psbt.signInput(index, keyPair, {
-            sighashType: bitcoin.Transaction.SIGHASH_ALL,
-        });
-    }
-});
-        psbt.finalizeAllInputs();
+                psbt.finalizeAllInputs();
         const transaction = psbt.extractTransaction();
         const transactionHex = transaction.toHex();
 

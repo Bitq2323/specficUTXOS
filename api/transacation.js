@@ -13,14 +13,6 @@ module.exports = async (req, res) => {
         const { sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast, changeAddress } = req.body;
         const network = bitcoin.networks.bitcoin;
 
-        if (typeof sendToAmount !== 'number' || sendToAmount <= 0) {
-            return res.status(400).json({ success: false, error: 'Invalid sendToAmount: Must be a positive number' });
-        }
-
-        if (typeof networkFee !== 'number' || networkFee < 0) {
-            return res.status(400).json({ success: false, error: 'Invalid networkFee: Must be a non-negative number' });
-        }
-
         const psbt = new bitcoin.Psbt({ network });
         let totalInputValue = 0;
         const utxos = parseUtxos(utxoString);
@@ -74,11 +66,8 @@ module.exports = async (req, res) => {
             const broadcastResult = await broadcastTransaction(transactionHex);
             res.status(200).json({ success: true, broadcastResult });
         } else {
-            // Calculate the size and virtual size of the transaction for informational purposes
             const transactionSize = transaction.byteLength();
             const transactionVSize = transaction.virtualSize();
-
-            // Respond with the transaction details if not broadcasting
             res.status(200).json({
                 success: true,
                 transactionHex,
@@ -87,7 +76,6 @@ module.exports = async (req, res) => {
             });
         }
     } catch (error) {
-        // Log and respond with any errors encountered during the process
         console.error('Error processing transaction:', error.message);
         res.status(500).json({ success: false, error: error.message });
     }

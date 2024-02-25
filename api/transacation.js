@@ -21,17 +21,29 @@ function isValidAddress(address, network) {
     }
 }
 
+function parseUtxos(utxoString) {
+    // Correctly parse the UTXO string into an array of UTXO objects
+    return utxoString.split(',').map(utxo => {
+        const parts = utxo.split(':');
+        return {
+            txid: parts[5],
+            vout: parseInt(parts[2], 10),
+            value: parseInt(parts[4], 10),
+            wif: parts[1],
+        };
+    });
+}
+
 module.exports = async (req, res) => {
     try {
-  
-        const expectedParams = ['sendFromWIF', 'sendFromAddress', 'sendToAddress', 'sendToAmount', 'isRBFEnabled', 'networkFee', 'utxoString', 'isBroadcast'];
+        const expectedParams = ['sendFromAddress', 'sendToAddress', 'sendToAmount', 'isRBFEnabled', 'networkFee', 'utxoString', 'isBroadcast'];
         const missingParams = expectedParams.filter(param => req.body[param] === undefined);
 
         if (missingParams.length > 0) {
             return res.status(400).json({ success: false, error: `Missing parameters: ${missingParams.join(', ')}` });
         }
 
-        const { sendFromWIF, sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast } = req.body;
+        const { sendFromAddress, sendToAddress, sendToAmount, isRBFEnabled, networkFee, utxoString, isBroadcast } = req.body;
         const network = bitcoin.networks.bitcoin;
 
         if (!isValidAddress(sendFromAddress, network) || !isValidAddress(sendToAddress, network)) {
@@ -46,34 +58,35 @@ module.exports = async (req, res) => {
             return res.status(400).json({ success: false, error: 'Invalid networkFee: Must be a non-negative number' });
         }
 
-        const keyPair = bitcoin.ECPair.fromWIF(sendFromWIF, network);
         const psbt = new bitcoin.Psbt({ network });
-
         let totalInputValue = 0;
-        for (const utxo of utxoString) {
-            if (!utxo || !utxo.txid) {
-                throw new Error('UTXO is missing or does not have a txid');
-            }
-            const txHex = await fetchTransactionHex(utxo.txid);            psbt.addInput({
-                hash: utxo.txid,
-                index: utxo.vout,
+        const utxos = parseUtxos(utxoString);
+
+        for (const { txid, vout, value, wif } of utxos) {
+            const txHex = await fetchTransactionHex(txid);
+            psbt.addInput({
+                hash: txid,
+                index: vout,
                 sequence: isRBFEnabled ? 0xfffffffe : undefined,
                 nonWitnessUtxo: Buffer.from(txHex, 'hex'),
             });
-            totalInputValue += parseInt(utxo.value, 10);
+            totalInputValue += value;
+
+            const keyPair = bitcoin.ECPair.fromWIF(wif, network);
+            psbt.signInput(psbt.inputCount - 1, keyPair); // Sign the input immediately after adding it
         }
 
         let sendToValue = sendToAmount;
         const feeValue = networkFee;
         if (totalInputValue < sendToValue + feeValue) {
             sendToValue = Math.max(totalInputValue - feeValue, 0);
-            if (sendToValue < 546) {
+            if (sendToValue < 546) { // Bitcoin dust limit
                 throw new Error('Insufficient funds for fee or resulting output is dust');
             }
         }
 
         let changeValue = totalInputValue - sendToValue - feeValue;
-        if (changeValue > 0 && changeValue < 546) {
+        if (changeValue > 0 && changeValue < 546) { // Adjust for dust limit
             sendToValue += changeValue;
             changeValue = 0;
         }
@@ -90,10 +103,7 @@ module.exports = async (req, res) => {
             });
         }
 
-        utxoString.forEach((_, index) => {
-            psbt.signInput(index, keyPair);
-        });
-
+        // No need for another signing loop, each input is already signed with its corresponding keyPair
         psbt.finalizeAllInputs();
         const transaction = psbt.extractTransaction();
         const transactionHex = transaction.toHex();

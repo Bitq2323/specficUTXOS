@@ -29,16 +29,32 @@ module.exports = async (req, res) => {
             totalInputValue += value;
         }
         
-        let sendToValue = sendToAmount;
+        let sendToValue;
         const feeValue = networkFee;
-        let changeValue = totalInputValue - sendToValue - feeValue;
-        
+        let changeValue;
+
+        // Dynamically calculate sendToValue and changeValue based on total input and fee
+        if (totalInputValue <= sendToAmount + feeValue) {
+            // If sending the whole balance or if the balance is not enough to cover the fee, adjust sendToValue
+            sendToValue = totalInputValue - feeValue;
+            changeValue = 0; // No change since the entire balance is used
+        } else {
+            // Otherwise, proceed as planned
+            sendToValue = sendToAmount;
+            changeValue = totalInputValue - sendToValue - feeValue;
+        }
+
+        // Ensure sendToValue is not negative
+        if (sendToValue < 0) {
+            throw new Error('Insufficient funds to cover the sending amount and fee');
+        }
+
         // Add output to recipient
         psbt.addOutput({
             address: sendToAddress,
             value: sendToValue,
         });
-        
+
         // Add change output if needed
         if (changeValue > 0) {
             psbt.addOutput({
